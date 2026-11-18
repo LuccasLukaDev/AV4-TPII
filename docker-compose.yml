@@ -1,0 +1,193 @@
+services:
+  # ===================== Message Broker =====================
+  cinebridge-mq:
+    image: rabbitmq:3-management-alpine
+    container_name: cinebridge-mq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ===================== Databases =====================
+  profissionais-db:
+    image: postgres:15-alpine
+    container_name: profissionais-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: profissionais
+    volumes:
+      - profissionais-data:/var/lib/postgresql/data
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d profissionais"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  projetos-db:
+    image: postgres:15-alpine
+    container_name: projetos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: projetos
+    volumes:
+      - projetos-data:/var/lib/postgresql/data
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d projetos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api-db:
+    image: postgres:15-alpine
+    container_name: api-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: cinebridge
+    volumes:
+      - api-data:/var/lib/postgresql/data
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cinebridge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ===================== Microservices =====================
+  cinebridge-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: cinebridge-api
+    restart: unless-stopped
+    depends_on:
+      api-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+      cinebridge-profissionais:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATABASE_URL: "postgresql://postgres:senha123@api-db:5432/cinebridge?schema=public"
+      RABBITMQ_URL: "amqp://guest:guest@cinebridge-mq:5672"
+      NODE_ENV: production
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  cinebridge-profissionais:
+    build:
+      context: ./profissionais
+      dockerfile: Dockerfile
+    container_name: cinebridge-profissionais
+    restart: unless-stopped
+    depends_on:
+      profissionais-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      DATABASE_URL: "postgresql://postgres:senha123@profissionais-db:5432/profissionais?schema=public"
+      RABBITMQ_URL: "amqp://guest:guest@cinebridge-mq:5672"
+      NODE_ENV: production
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  cinebridge-projetos:
+    build:
+      context: ./projetos
+      dockerfile: Dockerfile
+    container_name: cinebridge-projetos
+    restart: unless-stopped
+    depends_on:
+      projetos-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      DATABASE_URL: "postgresql://postgres:senha123@projetos-db:5432/projetos?schema=public"
+      RABBITMQ_URL: "amqp://guest:guest@cinebridge-mq:5672"
+      NODE_ENV: production
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  cinebridge-notificacoes:
+    build:
+      context: ./notificacoes
+      dockerfile: Dockerfile
+    container_name: cinebridge-notificacoes
+    restart: unless-stopped
+    depends_on:
+      cinebridge-mq:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+    environment:
+      PORT: 3003
+      RABBITMQ_URL: "amqp://guest:guest@cinebridge-mq:5672"
+      NODE_ENV: production
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  cinebridge-net:
+    driver: bridge
+    name: cinebridge-net
+
+volumes:
+  profissionais-data:
+  projetos-data:
+  api-data:
